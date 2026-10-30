@@ -1,0 +1,37 @@
+test_chip,axis,method,rmse
+1,x,"Other chips' model, used as-is",8.06214267730794
+1,x,Single-point cal of new chip (25 °C),0.35959483626694405
+1,x,New chip's 25 °C point + borrowed curve shape,1.8678816229173825
+1,x,Chip's own quadratic (full calibration),0.23091888902628663
+1,y,"Other chips' model, used as-is",3.8791217019291957
+1,y,Single-point cal of new chip (25 °C),0.5374736545816304
+1,y,New chip's 25 °C point + borrowed curve shape,0.7089417802791078
+1,y,Chip's own quadratic (full calibration),0.07040053827920749
+1,z,"Other chips' model, used as-is",1.3629440349465498
+1,z,Single-point cal of new chip (25 °C),0.0739333816433089
+1,z,New chip's 25 °C point + borrowed curve shape,1.0044863159140183
+1,z,Chip's own quadratic (full calibration),0.014604228772503836
+2,x,"Other chips' model, used as-is",2.5685752770189563
+2,x,Single-point cal of new chip (25 °C),0.6421075877890985
+2,x,New chip's 25 °C point + borrowed curve shape,1.394060744247833
+2,x,Chip's own quadratic (full calibration),0.059674061786661625
+2,y,"Other chips' model, used as-is",2.5670538408659245
+2,y,Single-point cal of new chip (25 °C),0.19429373415821957
+2,y,New chip's 25 °C point + borrowed curve shape,0.3822004003955883
+2,y,Chip's own quadratic (full calibration),0.030300680484977062
+2,z,"Other chips' model, used as-is",3.124465375238069
+2,z,Single-point cal of new chip (25 °C),0.6975601548519434
+2,z,New chip's 25 °C point + borrowed curve shape,0.09824965074999938
+2,z,Chip's own quadratic (full calibration),0.08961482835557333
+3,x,"Other chips' model, used as-is",10.505849660064614
+3,x,Single-point cal of new chip (25 °C),3.651188132903177
+3,x,New chip's 25 °C point + borrowed curve shape,3.2288069608455228
+3,x,Chip's own quadratic (full calibration),0.19337205122964715
+3,y,"Other chips' model, used as-is",1.3249119429170115
+3,y,Single-point cal of new chip (25 °C),0.1946013073647588
+3,y,New chip's 25 °C point + borrowed curve shape,0.34725845010519824
+3,y,Chip's own quadratic (full calibration),0.03404124988114367
+3,z,"Other chips' model, used as-is",2.398512834142478
+3,z,Single-point cal of new chip (25 °C),1.3936492414318808
+3,z,New chip's 25 °C point + borrowed curve shape,1.031463946927997
+3,z,Chip's own quadratic (full calibration),0.044431829104655124

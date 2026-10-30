@@ -1,0 +1,60 @@
+{
+  "cool": {
+    "No compensation": {
+      "heading_error_10min_deg": 398.09382625431147,
+      "heading_error_30min_deg": 1310.0992247664603,
+      "max_abs_deg": 1310.0992247664603
+    },
+    "Start-up calibration only": {
+      "heading_error_10min_deg": -133.0688864204944,
+      "heading_error_30min_deg": -284.32866335465746,
+      "max_abs_deg": 284.32866335465746
+    },
+    "Quadratic": {
+      "heading_error_10min_deg": -17.269360682861393,
+      "heading_error_30min_deg": -70.25603071546422,
+      "max_abs_deg": 70.25603071546422
+    },
+    "MLP": {
+      "heading_error_10min_deg": -20.54835133983812,
+      "heading_error_30min_deg": -85.93353412827123,
+      "max_abs_deg": 85.93353412827123
+    },
+    "ThermoGyro hybrid": {
+      "heading_error_10min_deg": 12.571895429941733,
+      "heading_error_30min_deg": -17.575374301479744,
+      "max_abs_deg": 22.306619174021208
+    },
+    "T_start": 14.61824,
+    "T_end": 7.966783333333335
+  },
+  "hot": {
+    "No compensation": {
+      "heading_error_10min_deg": 945.5647970801118,
+      "heading_error_30min_deg": 4025.1595462417804,
+      "max_abs_deg": 4025.1595462417804
+    },
+    "Start-up calibration only": {
+      "heading_error_10min_deg": 148.99640074760632,
+      "heading_error_30min_deg": 1632.7954511029964,
+      "max_abs_deg": 1632.7954511029964
+    },
+    "Quadratic": {
+      "heading_error_10min_deg": 3.3102696323179472,
+      "heading_error_30min_deg": -41.38007860487157,
+      "max_abs_deg": 41.38007860487157
+    },
+    "MLP": {
+      "heading_error_10min_deg": 62.21370013045505,
+      "heading_error_30min_deg": 1000.5314699799835,
+      "max_abs_deg": 1000.5314699799835
+    },
+    "ThermoGyro hybrid": {
+      "heading_error_10min_deg": 3.310269632318116,
+      "heading_error_30min_deg": -41.380078604868636,
+      "max_abs_deg": 41.380078604868636
+    },
+    "T_start": 30.95944,
+    "T_end": 68.2349
+  }
+}

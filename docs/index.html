@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="ThermoGyro: ML temperature-drift compensation for the MPU-6050 gyro, trained on real chamber data.">
+<title>ThermoGyro</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="vendor/chart.umd.min.js"></script>
+<style>
+/* Layout: an instrument panel — a thermal header strip, then stacked
+   "modules" (explore / ride / calibrate / evidence), each a bench card with
+   controls on the left rail and readouts on the right. */
+:root {
+  --bg: #f3f5f6;          /* cool bench grey, slight blue bias */
+  --panel: #ffffff;
+  --ink: #12181d;
+  --ink-2: #4b5862;
+  --muted: #7d8a94;
+  --line: #dde3e7;
+  --cold: #2a78d6;        /* thermal scale: cold pole */
+  --hot: #e3631f;         /* thermal scale: hot pole */
+  --good: #1a9a6c;        /* ThermoGyro (aqua family) */
+  --warn: #b77400;
+  --raw: #8a949c;
+  --lin: #6250d6; --quad: #2a78d6; --mlp: #eb6834; --hyb: #1baf7a;
+  --chip-bg: #eef2f4;
+  --f-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1418; --panel: #161d22; --ink: #e9eef1; --ink-2: #b4c0c8; --muted: #7f8c95;
+  --line: #26313a; --cold: #4f97ee; --hot: #f07a3c; --good: #27b884; --warn: #e0a032; --raw: #8f9aa3;
+  --lin: #9085e9; --quad: #4f97ee; --mlp: #f07a3c; --hyb: #27b884; --chip-bg: #1d262d; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1418; --panel: #161d22; --ink: #e9eef1; --ink-2: #b4c0c8; --muted: #7f8c95;
+  --line: #26313a; --cold: #4f97ee; --hot: #f07a3c; --good: #27b884; --warn: #e0a032; --raw: #8f9aa3;
+  --lin: #9085e9; --quad: #4f97ee; --mlp: #f07a3c; --hyb: #27b884; --chip-bg: #1d262d; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px; display: grid; gap: 22px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(38px, 6vw, 64px); font-weight: 800; font-stretch: 72%; letter-spacing: -0.01em; line-height: .95; }
+h2 { font-size: 26px; font-weight: 750; font-stretch: 80%; }
+h3 { font-size: 15px; font-weight: 700; font-stretch: 90%; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 500 11.5px/1 var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mono, .num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+a { color: var(--cold); }
+
+/* header */
+.hero { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 28px; align-items: end; }
+.hero p.lede { color: var(--ink-2); font-size: 17px; margin-top: 14px; }
+.thermal { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--cold), #8fb8e8 38%, #f2c46b 62%, var(--hot)); }
+.scale { display: flex; justify-content: space-between; font: 11px var(--f-mono); color: var(--muted); margin-top: 6px; }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.fact { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.fact b { display: block; font: 700 26px/1.1 var(--f-display); font-stretch: 80%; }
+.fact span { font-size: 12.5px; color: var(--ink-2); }
+
+/* controls bar */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 10px;
+  display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; background: var(--chip-bg); border-radius: 8px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; color: var(--ink-2); font: 500 13px var(--f-body); padding: 6px 11px; border-radius: 6px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.seg button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cold); outline-offset: 2px; }
+.ctl { display: flex; flex-wrap: wrap; min-width: 0; max-width: 100%; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-2); }
+
+/* modules */
+.module { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: grid; gap: 16px; min-width: 0; }
+.module > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; align-items: baseline; }
+.module > header p { color: var(--ink-2); font-size: 14px; }
+.split { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; }
+.chartbox { position: relative; height: 380px; min-width: 0; }
+.side { display: grid; gap: 14px; align-content: start; min-width: 0; }
+label.sl { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+input[type=range] { width: 100%; accent-color: var(--hot); }
+.tval { font: 700 34px/1 var(--f-display); font-stretch: 75%; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 12px var(--f-mono); padding: 4px 9px; border-radius: 999px; }
+.pill.ok { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.pill.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+th { font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+td.num, th.num { text-align: right; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; vertical-align: -1px; }
+.tablewrap { overflow-x: auto; }
+.note { font-size: 12.5px; color: var(--muted); }
+
+/* ride */
+.dials { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.dial { display: grid; justify-items: center; gap: 6px; }
+.dial canvas { width: 100%; max-width: 230px; aspect-ratio: 1; }
+.dial .lab { font: 600 13px var(--f-body); }
+.dial .err { font: 700 28px/1 var(--f-display); font-stretch: 78%; }
+.ridebar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+button.btn { font: 600 13.5px var(--f-body); border-radius: 8px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.readouts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ro { background: var(--chip-bg); border-radius: 8px; padding: 8px 10px; }
+.ro small { display: block; font: 500 10.5px var(--f-mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+.ro b { font: 600 18px var(--f-mono); font-variant-numeric: tabular-nums; }
+
+/* calibrate */
+.drop { min-width: 0; border: 1.5px dashed var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; }
+.drop.over { border-color: var(--cold); }
+pre.code { background: var(--chip-bg); border-radius: 10px; padding: 14px; overflow-x: auto; font: 12.5px/1.5 var(--f-mono); margin: 0; color: var(--ink); }
+select { max-width: 100%; min-width: 0; font: 13px var(--f-body); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.msg { font-size: 13px; color: var(--warn); }
+footer { color: var(--ink-2); font-size: 13px; display: grid; gap: 6px; }
+
+@media (max-width: 860px) {
+  .hero, .split { grid-template-columns: minmax(0, 1fr); }
+  .chartbox { height: 300px; }
+}
+@media (max-width: 480px) {
+  .facts, .readouts { grid-template-columns: minmax(0, 1fr); }
+  .dials { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<style>html{color-scheme:light dark} body{margin:0} [hidden]{display:none!important}</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <div class="eyebrow">MPU-6050 motion sensor · fixing heat errors with machine learning · AI/ML for Mechanical Engineers, NIT Trichy</div>
+      <h1 style="margin-top:12px">ThermoGyro</h1>
+      <p class="lede">The same bike is used on a cool morning and after standing in the hot afternoon sun. Its motion sensor gives a small wrong reading that changes with temperature, so a bike that is standing still slowly "turns" in software. ThermoGyro learns this error from real lab recordings of three MPU-6050 chips and removes it.</p>
+    </div>
+    <div>
+      <div class="thermal" role="img" aria-label="Temperature scale from minus 18 to 72 degrees Celsius"></div>
+      <div class="scale"><span>−18 °C</span><span>temperature range of the real lab data</span><span>72 °C</span></div>
+      <div class="facts" style="margin-top:14px">
+        <div class="fact"><b class="num" id="f-drift">—</b><span>how much this gyro's error changes from cold to hot</span></div>
+        <div class="fact"><b class="num" id="f-raw">—</b><span>wrong direction after 30 min in the heat, with the usual "measure once" fix</span></div>
+        <div class="fact"><b class="num" id="f-tg">—</b><span>same 30 minutes with ThermoGyro</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="bar" role="toolbar" aria-label="Sensor selection">
+    <div class="ctl">Chip <div class="seg" id="seg-imu"><button aria-pressed="false" data-v="1">Chip 1</button><button aria-pressed="false" data-v="2">Chip 2</button><button aria-pressed="true" data-v="3">Chip 3</button></div></div>
+    <div class="ctl">Gyro axis <div class="seg" id="seg-axis"><button aria-pressed="false" data-v="x">x</button><button aria-pressed="false" data-v="y">y</button><button aria-pressed="true" data-v="z">z (heading)</button></div></div>
+    <div class="ctl">Calibrated with <div class="seg" id="seg-cal"><button aria-pressed="true" data-v="full">all temperatures (−18 to 72 °C)</button><button aria-pressed="false" data-v="cool">cool data only (up to 30 °C)</button></div></div>
+  </div>
+
+  <!-- MODULE 1 -->
+  <section class="module" id="explore">
+    <header>
+      <div><div class="eyebrow">Part 1 · explore the error</div><h2>How the sensor's error changes with temperature</h2></div>
+      <p>Dots are real measurements (10-second averages). Lines are what each trained model predicts. Move the slider to try any temperature.</p>
+    </header>
+    <div class="split">
+      <div class="chartbox"><canvas id="c-bias" aria-label="Gyro error versus temperature chart"></canvas></div>
+      <div class="side">
+        <label class="sl" for="in-T">Chip temperature
+          <span class="tval num" id="o-T">45.0 °C</span>
+          <input id="in-T" type="range" min="-25" max="80" step="0.5" value="45">
+        </label>
+        <label class="sl" for="in-d">Heating (+) or cooling (−) speed <span class="num" id="o-d">0.0 °C/min</span>
+          <input id="in-d" type="range" min="-4" max="2" step="0.1" value="0">
+        </label>
+        <div><span class="pill ok" id="range-pill">inside calibration</span></div>
+        <div class="tablewrap"><table aria-label="Predicted error at the chosen temperature">
+          <thead><tr><th>Model</th><th class="num">Predicted error (°/s)</th><th class="num">Typical miss in heat</th></tr></thead>
+          <tbody id="t-pred"></tbody></table></div>
+        <p class="note">"Typical miss in heat" is how wrong each model was on real data above 30 °C when it had only learned from data up to 30 °C (smaller is better). "Measure once" subtracts a single error value measured at 25 °C, like most Arduino code.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODULE 2 -->
+  <section class="module" id="ride">
+    <header>
+      <div><div class="eyebrow">Part 2 · replay a ride</div><h2>A bike standing still for 30 minutes</h2></div>
+      <p>These compasses replay real recorded sensor data. The bike never moved, so the right answer is always 0°. Any turn you see is error.</p>
+    </header>
+    <div class="ridebar">
+      <div class="seg" id="seg-ride"><button aria-pressed="false" data-v="cool">Cool morning (another day)</button><button aria-pressed="true" data-v="hot">Hot afternoon (learned only up to 30 °C)</button></div>
+      <button class="btn primary" id="b-play">Play ride</button>
+      <button class="btn" id="b-reset">Reset</button>
+      <label class="ctl" for="in-speed">Speed <select id="in-speed"><option value="30">30×</option><option value="60" selected>60×</option><option value="180">180×</option></select></label>
+    </div>
+    <div class="split">
+      <div class="side">
+        <div class="dials">
+          <div class="dial"><canvas id="d-raw" width="460" height="460" aria-label="Compass with the usual measure-once fix"></canvas><span class="lab">Usual fix: measure once at start</span><span class="err num" id="e-raw" style="color:var(--hot)">0.0°</span></div>
+          <div class="dial"><canvas id="d-tg" width="460" height="460" aria-label="Heading dial with ThermoGyro"></canvas><span class="lab">ThermoGyro</span><span class="err num" id="e-tg" style="color:var(--good)">0.0°</span></div>
+        </div>
+        <div class="readouts">
+          <div class="ro"><small>Time</small><b id="r-t">00:00</b></div>
+          <div class="ro"><small>Chip temp</small><b id="r-T">—</b></div>
+          <div class="ro"><small>Gyro reading</small><b id="r-g">—</b></div>
+        </div>
+      </div>
+      <div class="chartbox"><canvas id="c-ride" aria-label="Heading error over time chart"></canvas></div>
+    </div>
+    <p class="note" id="ride-note"></p>
+  </section>
+
+  <!-- MODULE 3 -->
+  <section class="module" id="calibrate">
+    <header>
+      <div><div class="eyebrow">Part 3 · calibrate your own sensor</div><h2>Make a correction for your own MPU-6050</h2></div>
+      <p>Every chip has its own error curve, so each sensor needs its own calibration. Record your board while it sits still and slowly warms up or cools down, then load the file here.</p>
+    </header>
+    <div class="split">
+      <div class="side">
+        <div class="drop" id="drop">
+          <h3>Your log file (CSV)</h3>
+          <p class="note">It needs five columns: time (s), temperature, gx, gy, gz. Common header names are recognised automatically.</p>
+          <input type="file" id="in-file" accept=".csv,.txt">
+          <div class="ctl"><label for="in-units">Units</label>
+            <select id="in-units"><option value="dps">gyro in °/s, temperature in °C</option><option value="rad">gyro in rad/s, temperature in °C</option><option value="raw">raw sensor numbers (converted automatically)</option></select></div>
+          <button class="btn" id="b-sample">Try an example (chip 2, real lab data)</button>
+          <span class="msg" id="cal-msg" role="status"></span>
+        </div>
+        <div class="tablewrap"><table aria-label="Fit results per axis"><thead><tr><th>Axis</th><th class="num">Readings</th><th class="num">Fit quality R²</th><th class="num">Typical miss °/s</th><th class="num">Error change °/s</th></tr></thead><tbody id="t-fit"></tbody></table></div>
+      </div>
+      <div class="chartbox"><canvas id="c-cal" aria-label="Fitted error curves for the uploaded log"></canvas></div>
+    </div>
+    <div style="display:grid;gap:8px;min-width:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3>Code to paste into your ESP32 / Arduino program</h3><button class="btn" id="b-copy">Copy code</button></div>
+      <pre class="code" id="code">// Load a log to generate the code.</pre>
+      <p class="note">A curve is fitted to each axis with the normal equation, W = (XᵀX)⁻¹XᵀY, just like in the report. When the board switches on, keep it still for a few seconds so it can measure its starting error; after that the curve corrects for temperature changes.</p>
+    </div>
+  </section>
+
+  <!-- MODULE 4 -->
+  <section class="module" id="evidence">
+    <header>
+      <div><div class="eyebrow">Part 4 · the evidence</div><h2>How well each model did on this gyro</h2></div>
+      <p>Numbers are the typical miss (RMSE, in °/s) on real test data the models never saw. Smaller is better; the best in each column is marked with a dot.</p>
+    </header>
+    <div class="tablewrap"><table id="t-ev" aria-label="Model comparison"></table></div>
+    <p class="note">Known temperatures: tested on parts of the data held back from training. Heat test: learned only up to 30 °C, tested above 30 °C. Another day: tested on a different recording, using the first 60 seconds as the start-up measurement.</p>
+  </section>
+
+  <footer>
+    <div>Data: D. Maton, J. Economou, D. Galvão Wall, I. Khan, R. Cooper, "Low-cost IMU Sensor Temperature Humidity Zero Bias Data", Cranfield University, 2024. DOI <a href="https://doi.org/10.17862/cranfield.rd.24291112" target="_blank" rel="noopener">10.17862/cranfield.rd.24291112</a>, CC BY 4.0.</div>
+    <div>The models were trained in Python (written from scratch with NumPy) and run here with exactly the same numbers. Project by Vaibhav Chandhok, NIT Trichy.</div>
+  </footer>
+</div>
+
+<script id="tg-models">
+/* ---- ThermoGyro inference: exact ports of src/models.py predict() ---- */
+const TG = {
+  poly(m, T) { const z = (T - m.Tm) / m.Ts; let y = 0, p = 1; for (let k = 0; k <= m.degree; k++) { y += m.W[k] * p; p *= z; } return y; },
+  mlp(m, x) {
+    let a = x.map((v, i) => (v - m.x_mu[i]) / m.x_sd[i]);
+    for (let l = 0; l < m.W.length; l++) {
+      const W = m.W[l], b = m.b[l], z = W.map((row, j) => row.reduce((s, w, k) => s + w * a[k], b[j]));
+      a = l === m.W.length - 1 ? z : z.map(v => m.act === "relu" ? Math.max(0, v) : Math.tanh(v));
+    }
+    return a[0] * m.y_sd + m.y_mu;
+  },
+  hybrid(h, T, d) {
+    const base = TG.poly(h.backbone, T);
+    const inside = T >= h.Tlo - h.margin && T <= h.Thi + h.margin;
+    if (!inside) return base;
+    const c = Math.min(h.rhi, Math.max(h.rlo, TG.mlp(h.mlp, [T, d])));
+    return base + c;
+  },
+  inRange(h, T) { return T >= h.Tlo - h.margin && T <= h.Thi + h.margin; },
+};
+if (typeof module !== "undefined") module.exports = TG;
+</script>
+
+<script>
+(() => {
+const S = { imu: "3", axis: "z", cal: "full", ride: "hot", T: 45, d: 0, playing: false, k: 0 };
+let MODELS, DATA, RES, charts = {}, rideCache = null, timer = null, calData = null;
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const AXK = { x: "gx_dps", y: "gy_dps", z: "gz_dps" };
+const NAMES = [["spc", "Measure once (25 °C)", "--raw"], ["linear", "Straight line", "--lin"], ["quadratic", "Curve (quadratic)", "--quad"], ["mlp", "Neural network", "--mlp"], ["hybrid", "ThermoGyro", "--hyb"]];
+
+function setSeg(id, key, cb) {
+  $(id).addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    [...$(id).children].forEach(x => x.setAttribute("aria-pressed", x === b));
+    S[key] = b.dataset.v; cb();
+  });
+}
+
+function model() { return MODELS[S.imu + S.axis][S.cal]; }
+function spcValue() {             // single-point cal: mean bias within 25±2 °C of the sweep
+  const g = DATA["thermal_sweep_" + S.imu], y = g[AXK[S.axis]];
+  const v = g.T_imu_C.map((T, i) => Math.abs(T - 25) <= 2 ? y[i] : null).filter(v => v !== null);
+  return v.reduce((a, b) => a + b, 0) / v.length;
+}
+function predictAll(T, d) {
+  const m = model();
+  return { spc: spcValue(), linear: TG.poly(m.linear, T), quadratic: TG.poly(m.quadratic, T),
+           mlp: TG.mlp(m.mlp, [T, d]), hybrid: TG.hybrid(m.hybrid, T, d) };
+}
+function hotRMSE(name) {
+  const map = { spc: "Single-point cal", linear: "Linear", quadratic: "Quadratic", mlp: "MLP", hybrid: "ThermoGyro hybrid" };
+  const r = RES.s2_extrapolation.find(r => r.imu == S.imu && r.axis === S.axis && r.model === map[name]);
+  return r ? r.test_rmse : NaN;
+}
+
+function chartDefaults() {
+  Chart.defaults.font.family = css("--f-body"); Chart.defaults.color = css("--muted");
+  Chart.defaults.borderColor = css("--line"); Chart.defaults.animation = false;
+}
+function axisOpts(xl, yl) {
+  return { x: { type: "linear", title: { display: true, text: xl, color: css("--ink-2") }, grid: { color: css("--line") } },
+           y: { title: { display: true, text: yl, color: css("--ink-2") }, grid: { color: css("--line") } } };
+}
+
+/* ---------------- module 1 ---------------- */
+function drawBias() {
+  const g = DATA["thermal_sweep_" + S.imu], y = g[AXK[S.axis]], m = model();
+  const cool = [], heat = [];
+  g.T_imu_C.forEach((T, i) => (g.dTdt_Cpm[i] < 0 ? cool : heat).push({ x: T, y: y[i] }));
+  const Tg = []; for (let T = -25; T <= 80; T += 0.5) Tg.push(T);
+  const line = f => Tg.map(T => ({ x: T, y: f(T) }));
+  const spc = spcValue();
+  const lim = [Math.min(...y) - 0.6, Math.max(...y) + 0.8];
+  const ds = [
+    { label: "Measured while cooling", data: cool, type: "scatter", pointRadius: 1.6, backgroundColor: css("--cold") + "88", borderWidth: 0, order: 9 },
+    { label: "Measured while heating", data: heat, type: "scatter", pointRadius: 1.6, backgroundColor: css("--hot") + "88", borderWidth: 0, order: 9 },
+    { label: "Measure once (25 °C)", data: line(() => spc), borderColor: css("--raw"), borderDash: [5, 4] },
+    { label: "Straight line", data: line(T => TG.poly(m.linear, T)), borderColor: css("--lin") },
+    { label: "Curve (quadratic)", data: line(T => TG.poly(m.quadratic, T)), borderColor: css("--quad") },
+    { label: "Neural network", data: line(T => TG.mlp(m.mlp, [T, 0])), borderColor: css("--mlp") },
+    { label: "ThermoGyro", data: line(T => TG.hybrid(m.hybrid, T, 0)), borderColor: css("--hyb"), borderWidth: 2.6 },
+    { label: "Your temperature", data: [{ x: S.T, y: lim[0] }, { x: S.T, y: lim[1] }], borderColor: css("--ink"), borderWidth: 1, borderDash: [2, 3] },
+  ].map(d => Object.assign({ type: "line", pointRadius: 0, borderWidth: 2, fill: false, tension: 0 }, d));
+  const opts = { responsive: true, maintainAspectRatio: false, parsing: false,
+    scales: Object.assign(axisOpts("Chip temperature (°C)", "Gyro " + S.axis + " error (°/s)"), {}),
+    plugins: { legend: { position: "bottom", labels: { boxWidth: 12, color: css("--ink-2") } },
+      tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(3)} °/s at ${c.parsed.x.toFixed(1)} °C` } } } };
+  opts.scales.x.min = -25; opts.scales.x.max = 80; opts.scales.y.min = lim[0]; opts.scales.y.max = lim[1];
+  // shade the extrapolation zone
+  const tr = m.hybrid; const zone = { id: "zone", beforeDatasetsDraw(c) {
+    const { ctx, chartArea: a, scales: { x } } = c; ctx.save(); ctx.fillStyle = css("--warn") + "14";
+    const lo = x.getPixelForValue(tr.Tlo), hi = x.getPixelForValue(tr.Thi);
+    ctx.fillRect(a.left, a.top, Math.max(0, lo - a.left), a.bottom - a.top);
+    ctx.fillRect(hi, a.top, Math.max(0, a.right - hi), a.bottom - a.top); ctx.restore(); } };
+  charts.bias?.destroy();
+  charts.bias = new Chart($("c-bias"), { data: { datasets: ds }, options: opts, plugins: [zone] });
+}
+function updatePred() {
+  $("o-T").textContent = S.T.toFixed(1) + " °C"; $("o-d").textContent = (S.d >= 0 ? "+" : "") + S.d.toFixed(1) + " °C/min";
+  const p = predictAll(S.T, S.d), inside = TG.inRange(model().hybrid, S.T);
+  const pill = $("range-pill");
+  pill.className = "pill " + (inside ? "ok" : "warn");
+  pill.textContent = inside ? "✓ known temperature: ThermoGyro uses its neural fix" : "⚠ new temperature: ThermoGyro uses the simple curve only";
+  $("t-pred").innerHTML = NAMES.map(([k, n, c]) =>
+    `<tr><td><span class="sw" style="background:var(${c})"></span>${n}</td><td class="num">${p[k].toFixed(3)}</td><td class="num">${hotRMSE(k).toFixed(3)}</td></tr>`).join("");
+  if (charts.bias) { const ds = charts.bias.data.datasets.at(-1); ds.data = [{ x: S.T, y: charts.bias.options.scales.y.min }, { x: S.T, y: charts.bias.options.scales.y.max }]; charts.bias.update("none"); }
+}
+
+/* ---------------- module 2 ---------------- */
+function smooth(a, w) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) { let s = 0, n = 0; for (let j = Math.max(0, i - (w >> 1)); j <= Math.min(a.length - 1, i + (w >> 1)); j++) { s += a[j]; n++; } o[i] = s / n; } return o; }
+function buildRide() {
+  const r = DATA[`ride_${S.ride}_${S.imu}`], g = r[AXK[S.axis]], t = r.t_s.map(v => v - r.t_s[0]);
+  const Ts = smooth(r.T_imu_C, 10);
+  let d = Ts.map((v, i) => { const a = Math.max(0, i - 1), b = Math.min(Ts.length - 1, i + 1); return (Ts[b] - Ts[a]) / (t[b] - t[a] || 1) * 60; });
+  d = smooth(d, 30);
+  const m = MODELS[S.imu + S.axis][S.ride === "hot" ? "cool" : "full"];
+  const st = t.map((v, i) => v <= 60 ? i : -1).filter(i => i >= 0);
+  const b0 = st.reduce((s, i) => s + g[i], 0) / st.length;
+  const p0 = st.reduce((s, i) => s + TG.hybrid(m.hybrid, Ts[i], d[i]), 0) / st.length;
+  let hr = 0, ht = 0; const HR = [], HT = [];
+  for (let i = 0; i < t.length; i++) {
+    const dt = i ? t[i] - t[i - 1] : 0;
+    hr += (g[i] - b0) * dt;
+    ht += (g[i] - (b0 + TG.hybrid(m.hybrid, Ts[i], d[i]) - p0)) * dt;
+    HR.push(hr); HT.push(ht);
+  }
+  rideCache = { t, Ts, g, HR, HT };
+  S.k = 0;
+  const mins = t.map(v => v / 60);
+  charts.ride?.destroy();
+  const opts = { responsive: true, maintainAspectRatio: false, parsing: false, scales: axisOpts("Minutes since start", "Wrong direction (°)"),
+    plugins: { legend: { position: "bottom", labels: { boxWidth: 12, color: css("--ink-2") } },
+      tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(1)}° at ${c.parsed.x.toFixed(1)} min` } } } };
+  opts.scales.x.min = 0; opts.scales.x.max = 30;
+  const all = HR.concat(HT); opts.scales.y.suggestedMin = Math.min(0, ...all) * 1.05; opts.scales.y.suggestedMax = Math.max(0, ...all) * 1.05;
+  charts.ride = new Chart($("c-ride"), { data: { datasets: [
+    { type: "line", label: "Usual fix: measure once", data: [], borderColor: css("--hot"), borderWidth: 2, pointRadius: 0 },
+    { type: "line", label: "ThermoGyro", data: [], borderColor: css("--good"), borderWidth: 2.6, pointRadius: 0 },
+  ] }, options: opts });
+  rideCache.mins = mins;
+  const T0 = Ts[0], T1 = S.ride === "hot" ? Math.max(...Ts) : Math.min(...Ts);
+  $("ride-note").textContent = S.ride === "hot"
+    ? `Real recording of chip ${S.imu} heating from ${T0.toFixed(0)} to ${T1.toFixed(0)} °C. The models only learned from data up to 30 °C, so every temperature here is new to them, and ThermoGyro uses its simple curve.`
+    : `Real recording of chip ${S.imu} on another day (switched on separately), cooling from ${T0.toFixed(0)} to ${T1.toFixed(0)} °C. The models learned from a different recording; the first 60 seconds are used to measure the starting error.`;
+  drawFrame();
+}
+function drawDial(cv, ang, col) {
+  const c = cv.getContext("2d"), W = cv.width, R = W / 2 - 18;
+  c.clearRect(0, 0, W, W); c.save(); c.translate(W / 2, W / 2);
+  c.strokeStyle = css("--line"); c.lineWidth = 3; c.beginPath(); c.arc(0, 0, R, 0, 2 * Math.PI); c.stroke();
+  c.fillStyle = css("--muted"); c.font = `500 20px ${css("--f-mono")}`; c.textAlign = "center"; c.textBaseline = "middle";
+  for (let a = 0; a < 360; a += 15) { const r = a % 90 ? R - 12 : R - 22, th = a * Math.PI / 180;
+    c.strokeStyle = css("--muted"); c.lineWidth = a % 90 ? 2 : 3; c.beginPath(); c.moveTo(Math.sin(th) * r, -Math.cos(th) * r); c.lineTo(Math.sin(th) * R, -Math.cos(th) * R); c.stroke(); }
+  [["N", 0], ["E", 90], ["S", 180], ["W", 270]].forEach(([l, a]) => { const th = a * Math.PI / 180; c.fillText(l, Math.sin(th) * (R - 46), -Math.cos(th) * (R - 46)); });
+  c.strokeStyle = css("--ink-2"); c.setLineDash([6, 6]); c.lineWidth = 2; c.beginPath(); c.moveTo(0, 0); c.lineTo(0, -R + 30); c.stroke(); c.setLineDash([]);
+  const th = ang * Math.PI / 180; c.strokeStyle = col; c.lineWidth = 7; c.lineCap = "round";
+  c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.sin(th) * (R - 30), -Math.cos(th) * (R - 30)); c.stroke();
+  c.fillStyle = col; c.beginPath(); c.arc(0, 0, 10, 0, 2 * Math.PI); c.fill(); c.restore();
+}
+function drawFrame() {
+  const R = rideCache, k = Math.min(S.k, R.t.length - 1);
+  drawDial($("d-raw"), R.HR[k], css("--hot")); drawDial($("d-tg"), R.HT[k], css("--good"));
+  $("e-raw").textContent = (R.HR[k] >= 0 ? "+" : "") + R.HR[k].toFixed(1) + "°";
+  $("e-tg").textContent = (R.HT[k] >= 0 ? "+" : "") + R.HT[k].toFixed(1) + "°";
+  const s = Math.round(R.t[k]); $("r-t").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  $("r-T").textContent = R.Ts[k].toFixed(1) + " °C"; $("r-g").textContent = R.g[k].toFixed(2) + " °/s";
+  const step = Math.max(1, Math.floor(R.t.length / 600));
+  const pts = (H) => { const o = []; for (let i = 0; i <= k; i += step) o.push({ x: R.mins[i], y: H[i] }); o.push({ x: R.mins[k], y: H[k] }); return o; };
+  charts.ride.data.datasets[0].data = pts(R.HR); charts.ride.data.datasets[1].data = pts(R.HT); charts.ride.update("none");
+}
+function play() {
+  if (S.playing) { stop(); return; }
+  if (S.k >= rideCache.t.length - 1) S.k = 0;
+  S.playing = true; $("b-play").textContent = "Pause";
+  let last = performance.now();
+  const tick = now => { if (!S.playing) return;
+    const sp = +$("in-speed").value, adv = (now - last) / 1000 * sp; last = now;
+    const tNow = rideCache.t[S.k] + adv; while (S.k < rideCache.t.length - 1 && rideCache.t[S.k] < tNow) S.k++;
+    drawFrame(); if (S.k >= rideCache.t.length - 1) { stop(); return; } timer = requestAnimationFrame(tick); };
+  timer = requestAnimationFrame(tick);
+}
+function stop() { S.playing = false; cancelAnimationFrame(timer); $("b-play").textContent = rideCache && S.k >= rideCache.t.length - 1 ? "Replay ride" : "Play ride"; }
+
+/* ---------------- module 3: calibrate your own chip ---------------- */
+function solve3(A, b) {           // Gaussian elimination with partial pivoting
+  const M = A.map((r, i) => [...r, b[i]]), n = b.length;
+  for (let c = 0; c < n; c++) { let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = c + 1; r < n; r++) { const f = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; } }
+  const x = new Array(n).fill(0); for (let r = n - 1; r >= 0; r--) { let s = M[r][n]; for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k]; x[r] = s / M[r][r]; } return x;
+}
+function fitQuad(T, y) {          // normal equation on standardised T
+  const n = T.length, Tm = T.reduce((a, b) => a + b, 0) / n, Ts = Math.sqrt(T.reduce((a, b) => a + (b - Tm) ** 2, 0) / n) || 1;
+  const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], bb = [0, 0, 0];
+  for (let i = 0; i < n; i++) { const z = (T[i] - Tm) / Ts, x = [1, z, z * z]; for (let r = 0; r < 3; r++) { bb[r] += x[r] * y[i]; for (let c = 0; c < 3; c++) A[r][c] += x[r] * x[c]; } }
+  const W = solve3(A, bb), m = { degree: 2, W, Tm, Ts }, p = T.map(t => TG.poly(m, t));
+  const ym = y.reduce((a, b) => a + b, 0) / n, sse = y.reduce((s, v, i) => s + (v - p[i]) ** 2, 0), sst = y.reduce((s, v) => s + (v - ym) ** 2, 0);
+  return { m, r2: 1 - sse / sst, rmse: Math.sqrt(sse / n), drift: Math.max(...p) - Math.min(...p) };
+}
+function binLog(rows) {           // 10-second averages, as in preprocess.py
+  const bins = new Map();
+  rows.forEach(r => { const k = Math.floor(r.t / 10); if (!bins.has(k)) bins.set(k, []); bins.get(k).push(r); });
+  return [...bins.values()].filter(b => b.length >= 1).map(b => { const o = {}; ["t", "T", "gx", "gy", "gz"].forEach(c => o[c] = b.reduce((s, r) => s + r[c], 0) / b.length); return o; });
+}
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+  const head = lines[0].split(/[,;\t]/).map(h => h.trim().toLowerCase());
+  const find = (re) => head.findIndex(h => re.test(h));
+  const idx = { t: find(/^(t|time|t_s|t \(s\)|millis|ms)/), T: find(/(temp|^t_imu|^tc$|^t$)/), gx: find(/gx|g_x|gyro_?x/), gy: find(/gy|g_y|gyro_?y/), gz: find(/gz|g_z|gyro_?z/) };
+  if (idx.T === idx.t) idx.T = find(/temp/);
+  if (Object.values(idx).some(v => v < 0)) throw new Error("Could not find all five columns. Use headers like: t_s, temp_C, gx, gy, gz.");
+  const ms = /millis|ms/.test(head[idx.t]);
+  const u = $("in-units").value, R2D = 180 / Math.PI;
+  const rows = [];
+  for (const l of lines.slice(1)) { const c = l.split(/[,;\t]/).map(Number); if (c.some(v => Number.isNaN(v))) continue;
+    let T = c[idx.T], g = [c[idx.gx], c[idx.gy], c[idx.gz]];
+    if (u === "rad") g = g.map(v => v * R2D);
+    if (u === "raw") { g = g.map(v => v / 131); T = T / 340 + 36.53; }
+    rows.push({ t: ms ? c[idx.t] / 1000 : c[idx.t], T, gx: g[0], gy: g[1], gz: g[2] }); }
+  if (rows.length < 30) throw new Error("Need at least 30 numeric rows.");
+  return rows;
+}
+function runCalibration(rows, label) {
+  const b = binLog(rows), T = b.map(r => r.T);
+  if (Math.max(...T) - Math.min(...T) < 3) { $("cal-msg").textContent = "The temperature changed by less than 3 °C, which is too little to see the error change. Warm up or cool down the board while recording."; }
+  else $("cal-msg").textContent = `Done: ${label}. ${rows.length} readings, averaged into ${b.length} ten-second steps, from ${Math.min(...T).toFixed(1)} to ${Math.max(...T).toFixed(1)} °C.`;
+  const fits = {}; ["gx", "gy", "gz"].forEach(a => fits[a] = fitQuad(T, b.map(r => r[a])));
+  calData = { b, fits, Tlo: Math.min(...T), Thi: Math.max(...T) };
+  $("t-fit").innerHTML = ["gx", "gy", "gz"].map(a => `<tr><td>${a[1]}</td><td class="num">${b.length}</td><td class="num">${fits[a].r2.toFixed(4)}</td><td class="num">${fits[a].rmse.toFixed(4)}</td><td class="num">${fits[a].drift.toFixed(3)}</td></tr>`).join("");
+  const col = { gx: "--lin", gy: "--mlp", gz: "--hyb" };
+  const ds = [];
+  ["gx", "gy", "gz"].forEach(a => {
+    const off = fits[a].m.W[0];
+    ds.push({ type: "scatter", label: `${a} measured`, data: b.map(r => ({ x: r.T, y: r[a] - off })), pointRadius: 1.6, backgroundColor: css(col[a]) + "66", borderWidth: 0 });
+    const Tg = []; for (let t = calData.Tlo; t <= calData.Thi; t += (calData.Thi - calData.Tlo) / 80) Tg.push(t);
+    ds.push({ type: "line", label: `${a} fitted curve`, data: Tg.map(t => ({ x: t, y: TG.poly(fits[a].m, t) - off })), borderColor: css(col[a]), borderWidth: 2.2, pointRadius: 0 });
+  });
+  charts.cal?.destroy();
+  charts.cal = new Chart($("c-cal"), { data: { datasets: ds }, options: { responsive: true, maintainAspectRatio: false, parsing: false,
+    scales: axisOpts("Chip temperature (°C)", "Change in error (°/s)"),
+    plugins: { legend: { position: "bottom", labels: { boxWidth: 12, color: css("--ink-2") } } } } });
+  const f = v => v.toPrecision(7);
+  const L = ["gx", "gy", "gz"].map(a => { const m = fits[a].m; return `  {${f(m.Tm)}f, ${f(m.Ts)}f, {${m.W.map(f).join("f, ")}f}},   // ${a}: R² ${fits[a].r2.toFixed(3)}, RMSE ${fits[a].rmse.toFixed(4)} °/s`; });
+  $("code").textContent =
+`// ThermoGyro calibration for ONE specific MPU-6050 (source: ${label})
+// Valid for die temperatures ${calData.Tlo.toFixed(1)} to ${calData.Thi.toFixed(1)} °C. Outside this range, re-calibrate.
+struct TGAxis { float Tm, Ts, W[3]; };
+const TGAxis TG_CAL[3] = {
+${L.join("\n")}
+};
+float tg_curve(int axis, float T) {              // bias(T) shape, deg/s
+  const TGAxis &c = TG_CAL[axis]; float z = (T - c.Tm) / c.Ts;
+  return c.W[0] + c.W[1] * z + c.W[2] * z * z;
+}
+// Start-up anchoring: keep the board still ~3 s at power-on and average the gyro -> b0[axis], T0.
+float b0[3], T0;
+float tg_correct(int axis, float gyro_dps, float T) { // T = raw_temp / 340.0 + 36.53
+  return gyro_dps - (b0[axis] + tg_curve(axis, T) - tg_curve(axis, T0));
+}`;
+}
+function loadSample() {
+  const g = DATA["thermal_sweep_2"];
+  const rows = g.t_s.map((t, i) => ({ t, T: g.T_imu_C[i], gx: g.gx_dps[i], gy: g.gy_dps[i], gz: g.gz_dps[i] }));
+  runCalibration(rows, "example: Cranfield chip 2 thermal sweep");
+}
+function handleFile(file) {
+  const fr = new FileReader();
+  fr.onload = () => { try { runCalibration(parseCSV(fr.result), file.name); } catch (e) { $("cal-msg").textContent = e.message; } };
+  fr.readAsText(file);
+}
+
+/* ---------------- module 4 ---------------- */
+function drawEvidence() {
+  const order = [["Single-point cal", "Start-up calibration only", "Measure once"], ["Linear", "Linear", "Straight line"], ["Quadratic", "Quadratic", "Curve (quadratic)"], ["Quadratic + dT/dt", "Quadratic + dT/dt", "Curve + heating speed"], ["MLP", "MLP", "Neural network"], ["ThermoGyro hybrid", "ThermoGyro hybrid", "ThermoGyro"], ["Poly deg 9", null, "Very wiggly curve (degree 9)"]];
+  const pick = (arr, m, key) => { const r = arr.find(r => r.imu == S.imu && r.axis === S.axis && r.model === m && (!r.test_run || r.test_run === "cycles_dwells")); return r ? r[key] : null; };
+  const rows = order.map(([m, m3, label]) => ({ m: label, a: pick(RES.s1_interpolation, m, "test_rmse"), b: pick(RES.s2_extrapolation, m, "test_rmse"), c: m3 ? pick(RES.s3_cross_day, m3, "rmse") : null }));
+  const best = k => Math.min(...rows.map(r => r[k]).filter(v => v != null));
+  const bs = { a: best("a"), b: best("b"), c: best("c") };
+  const cell = (v, k) => v == null ? `<td class="num" style="color:var(--muted)">—</td>` : `<td class="num"${v === bs[k] ? ` style="color:var(--good);font-weight:600"` : ""}>${v >= 100 ? v.toFixed(0) : v.toFixed(3)}${v === bs[k] ? " ●" : ""}</td>`;
+  $("t-ev").innerHTML = `<thead><tr><th>Model (chip ${S.imu}, ${S.axis}-gyro)</th><th class="num">Known temperatures</th><th class="num">Heat test</th><th class="num">Another day</th></tr></thead><tbody>` +
+    rows.map(r => `<tr><td>${r.m}</td>${cell(r.a, "a")}${cell(r.b, "b")}${cell(r.c, "c")}</tr>`).join("") + "</tbody>";
+}
+
+function facts() {
+  const g = DATA["thermal_sweep_" + S.imu][AXK[S.axis]];
+  $("f-drift").textContent = (Math.max(...g) - Math.min(...g)).toFixed(2) + " °/s";
+  const save = S.ride; S.ride = "hot"; buildRide(); const R = rideCache;
+  $("f-raw").textContent = Math.abs(R.HR.at(-1)).toFixed(0) + "°"; $("f-tg").textContent = Math.abs(R.HT.at(-1)).toFixed(0) + "°";
+  S.ride = save;
+}
+function refreshAll() { stop(); drawBias(); updatePred(); facts(); buildRide(); drawEvidence(); }
+
+async function init() {
+  chartDefaults();
+  [MODELS, DATA, RES] = await Promise.all(["data/models.json", "data/realdata.json", "data/results.json"].map(u => fetch(u).then(r => r.json())));
+  setSeg("seg-imu", "imu", refreshAll); setSeg("seg-axis", "axis", refreshAll);
+  setSeg("seg-cal", "cal", () => { drawBias(); updatePred(); });
+  setSeg("seg-ride", "ride", () => { stop(); buildRide(); });
+  $("in-T").addEventListener("input", e => { S.T = +e.target.value; updatePred(); });
+  $("in-d").addEventListener("input", e => { S.d = +e.target.value; updatePred(); });
+  $("b-play").addEventListener("click", play);
+  $("b-reset").addEventListener("click", () => { stop(); S.k = 0; drawFrame(); $("b-play").textContent = "Play ride"; });
+  $("b-sample").addEventListener("click", loadSample);
+  $("in-file").addEventListener("change", e => e.target.files[0] && handleFile(e.target.files[0]));
+  const drop = $("drop");
+  drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && handleFile(e.dataTransfer.files[0]); });
+  $("b-copy").addEventListener("click", () => { const t = $("code").textContent;
+    navigator.clipboard.writeText(t).then(() => $("b-copy").textContent = "Copied", () => { const r = document.createRange(); r.selectNodeContents($("code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); $("b-copy").textContent = "Selected, press Ctrl+C"; }); });
+  refreshAll(); loadSample();
+  // charts re-read colours when the theme changes
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { refreshAll(); calData && loadSample(); });
+}
+init().catch(e => { document.querySelector(".wrap").insertAdjacentHTML("afterbegin", `<p class="msg">Could not load the model files (${e.message}). Serve the docs/ folder over http, e.g. "python -m http.server" inside docs/.</p>`); });
+})();
+</script>
+
+</body>
+</html>

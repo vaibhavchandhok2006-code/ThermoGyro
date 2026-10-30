@@ -1,0 +1,23 @@
+{
+ "S1_median_ratio_quad_over_hybrid": 1.752149581741676,
+ "S1_hybrid_beats_quad_count": 9,
+ "S1_mlp_beats_quad_count": 8,
+ "S1_hybrid_beats_mlp_count": 4,
+ "S1_ratio_spc_over_hybrid_median": 14.445786722834603,
+ "S2_quad_beats_spc": 9,
+ "S2_mlp_beats_quad": 1,
+ "S2_mlp_worse_than_spc": 0,
+ "S2_poly9_min": 40.814483437636845,
+ "S2_poly9_max": 16792.182776867456,
+ "S2_ratio_spc_over_quad_median": 2.6885606060535827,
+ "S3_dwells_quad_beats_startup": 6,
+ "S3_dwells_hyb_beats_startup": 5,
+ "S3_dwells_hyb_beats_quad": 4,
+ "S3_cycles_quad_beats_startup": 6,
+ "S3_cycles_hyb_beats_startup": 6,
+ "S3_cycles_hyb_beats_quad": 3,
+ "S3_quad_noanchor_vs_anchor_median": [
+  0.22991873328198595,
+  0.1065910734729062
+ ]
+}
